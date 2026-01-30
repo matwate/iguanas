@@ -1,0 +1,7 @@
+.{
+    .name = .iguanas,
+    .version = "0.0.1",
+    .minimum_zig_version = "0.15.2",
+    .paths = .{""},
+    .fingerprint = 0xd3b88a393122c877,
+}
