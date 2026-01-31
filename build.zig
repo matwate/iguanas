@@ -15,6 +15,12 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{ .root_source_file = b.path("src/main.zig"), .target = target, .optimize = optimize, .imports = &.{.{ .name = "iguanas", .module = lib }} }),
     });
 
+    const string = b.dependency("string", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    lib.addImport("string", string.module("string"));
+
     b.installArtifact(exe);
 
     const run_cmd = b.addRunArtifact(exe);

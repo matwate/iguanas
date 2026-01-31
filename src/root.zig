@@ -1,175 +1,81 @@
 const std = @import("std");
+pub const String = @import("string").String;
 
-pub const Dtype = enum { int, float, string };
-pub const Value = union(Dtype) {
-    int: i32,
-    float: f32,
-    string: []const u8,
-};
-
-pub fn intValue(v: i32) Value {
-    return .{ .int = v };
-}
-
-pub fn floatValue(v: f32) Value {
-    return .{ .float = v };
-}
-
-pub fn stringValue(v: []const u8) Value {
-    return .{ .string = v };
-}
-
-const Column = union(enum) {
-    int: std.ArrayListAligned(i32, null),
-    float: std.ArrayListAligned(f32, null),
-    string: std.ArrayListAligned([]const u8, null),
-
-    fn deinit(col: *Column, allocator: std.mem.Allocator) void {
-        switch (col.*) {
-            .int => |*x| x.deinit(allocator),
-            .float => |*x| x.deinit(allocator),
-            .string => |*x| {
-                for (x.items) |str| {
-                    allocator.free(str);
-                }
-                x.deinit(allocator);
-            },
-        }
+pub fn DataFrame(comptime Schema: type) type {
+    if (!(@typeInfo(Schema) == .@"struct")) {
+        @compileError("Columns must be of type struct, found " ++ @typeName(Schema));
     }
+    return struct {
+        values: std.ArrayList(Schema),
 
-    fn append(col: *Column, allocator: std.mem.Allocator, value: Value) !void {
-        switch (col.*) {
-            .int => |*x| try x.append(allocator, value.int),
-            .float => |*x| try x.append(allocator, value.float),
-            .string => |*x| try x.append(allocator, value.string),
-        }
-    }
-};
+        allocator: std.mem.Allocator,
+        const Self = @This();
 
-const DataFrame = struct {
-    columns: std.StringArrayHashMap(Column),
-    allocator: std.mem.Allocator,
-
-    fn init(allocator: std.mem.Allocator) DataFrame {
-        return .{
-            .columns = std.StringArrayHashMap(Column).init(allocator),
-            .allocator = allocator,
-        };
-    }
-
-    pub fn deinit(self: *DataFrame) void {
-        var it = self.columns.iterator();
-        while (it.next()) |entry| {
-            entry.value_ptr.deinit(self.allocator);
-        }
-        self.columns.deinit();
-    }
-
-    pub fn addRow(self: *DataFrame, values: []const Value) !void {
-        var col_ptrs = try self.allocator.alloc(*Column, self.columns.count());
-        defer self.allocator.free(col_ptrs);
-
-        {
-            var it = self.columns.iterator();
-            var i: usize = 0;
-            while (it.next()) |entry| : (i += 1) {
-                col_ptrs[i] = entry.value_ptr;
-            }
-        }
-
-        for (values, 0..) |val, i| {
-            try col_ptrs[i].append(self.allocator, val);
-        }
-    }
-
-    pub fn print(self: *DataFrame, rows: ?usize) void {
-        var it = self.columns.iterator();
-        const first_col = it.next().?.value_ptr.*;
-        var row_count = switch (first_col) {
-            .int => |x| x.items.len,
-            .float => |x| x.items.len,
-            .string => |x| x.items.len,
-        };
-
-        if (rows) |rownum| {
-            row_count = rownum;
-        }
-
-        for (0..row_count) |row_idx| {
-            var col_it = self.columns.iterator();
-            var col_idx: usize = 0;
-            while (col_it.next()) |entry| : (col_idx += 1) {
-                if (col_idx > 0) std.debug.print(", ", .{});
-                switch (entry.value_ptr.*) {
-                    .int => |x| std.debug.print("{}", .{x.items[row_idx]}),
-                    .float => |x| std.debug.print("{}", .{x.items[row_idx]}),
-                    .string => |x| std.debug.print("{s}", .{x.items[row_idx]}),
-                }
-            }
-            std.debug.print("\n", .{});
-        }
-
-        std.debug.print("\n", .{});
-    }
-};
-
-pub fn parseCsv(allocator: std.mem.Allocator, path: []const u8, types: []const Dtype) !DataFrame {
-    var buf: [4096]u8 = undefined;
-    const file = try std.fs.cwd().openFile(path, .{});
-    defer file.close();
-
-    var huh = file.reader(&buf);
-    var reader = &huh.interface;
-
-    const headers = (try reader.takeDelimiter('\n')).?;
-    var df = DataFrame.init(allocator);
-
-    var header_it = std.mem.tokenizeSequence(u8, headers, ",");
-    var col_idx: usize = 0;
-    while (header_it.next()) |header| {
-        var col: Column = undefined;
-        switch (types[col_idx]) {
-            .int => col = .{ .int = .{ .items = &[_]i32{}, .capacity = 0 } },
-            .float => col = .{ .float = .{ .items = &[_]f32{}, .capacity = 0 } },
-            .string => col = .{ .string = .{ .items = &[_][]const u8{}, .capacity = 0 } },
-        }
-        try df.columns.put(header, col);
-        col_idx += 1;
-    }
-
-    var col_ptrs = try allocator.alloc(*Column, df.columns.count());
-    defer allocator.free(col_ptrs);
-
-    {
-        var it = df.columns.iterator();
-        var i: usize = 0;
-        while (it.next()) |entry| : (i += 1) {
-            col_ptrs[i] = entry.value_ptr;
-        }
-    }
-
-    while (try reader.takeDelimiter('\n')) |line| {
-        var row_it = std.mem.tokenizeSequence(u8, line, ",");
-        col_idx = 0;
-        while (row_it.next()) |token| {
-            const value: Value = switch (types[col_idx]) {
-                .int => Value{ .int = try std.fmt.parseInt(i32, token, 10) },
-                .float => Value{ .float = try std.fmt.parseFloat(f32, token) },
-                .string => Value{ .string = try allocator.dupe(u8, token) },
+        pub fn init(allocator: std.mem.Allocator) Self {
+            return .{
+                .values = std.ArrayList(Schema){},
+                .allocator = allocator,
             };
-
-            try col_ptrs[col_idx].append(allocator, value);
-            col_idx += 1;
         }
-    }
 
-    std.debug.print("Column names: [", .{});
-    var it = df.columns.iterator();
-    while (it.next()) |entry| {
-        std.debug.print("{s} ", .{entry.key_ptr.*});
-    }
+        pub fn fromCsv(allocator: std.mem.Allocator, path: []const u8) !Self {
+            var buf: [4096]u8 = undefined;
+            const file = try std.fs.cwd().openFile(path, .{});
+            defer file.close();
 
-    std.debug.print("]\n", .{});
+            var huh = file.reader(&buf);
+            var reader = &huh.interface;
 
-    return df;
+            var df = Self.init(allocator);
+            errdefer df.deinit();
+
+            // Skip the header
+            _ = try reader.takeDelimiter('\n');
+            while (try reader.takeDelimiter('\n')) |line| {
+                var row: Schema = undefined;
+                var row_it = std.mem.tokenizeSequence(u8, line, ",");
+                inline for (std.meta.fields(Schema)) |field| {
+                    const token = row_it.next() orelse return error.MissingField;
+                    if (@typeInfo(field.type) == .int) {
+                        @field(row, field.name) = try std.fmt.parseInt(field.type, token, 10);
+                    } else if (@typeInfo(field.type) == .float) {
+                        @field(row, field.name) = try std.fmt.parseFloat(field.type, token);
+                    } else if (field.type == String) {
+                        const fieldString = try String.init_with_contents(allocator, token);
+                        @field(row, field.name) = fieldString;
+                    }
+                }
+                try df.values.append(df.allocator, row);
+            }
+
+            return df;
+        }
+
+        pub fn fromDf(allocator: std.mem.Allocator, comptime otherSchema: type, other: DataFrame(otherSchema), transform: *const fn (?std.mem.Allocator, otherSchema) ?Schema) !Self {
+            var df = Self.init(allocator);
+            errdefer df.deinit();
+
+            for (other.values.items) |*v| {
+                const value = transform(df.allocator, v.*) orelse continue;
+                try df.addRow(value);
+            }
+            return df;
+        }
+
+        pub fn addRow(self: *Self, values: Schema) !void {
+            try self.values.append(self.allocator, values);
+        }
+
+        pub fn deinit(self: *Self) void {
+            for (self.values.items) |*row| {
+                inline for (std.meta.fields(Schema)) |field| {
+                    if (field.type == String) {
+                        var str = &@field(row, field.name);
+                        str.deinit();
+                    }
+                }
+            }
+            self.values.deinit(self.allocator);
+        }
+    };
 }

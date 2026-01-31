@@ -4,4 +4,12 @@
     .minimum_zig_version = "0.15.2",
     .paths = .{""},
     .fingerprint = 0xd3b88a393122c877,
+
+    .dependencies = .{
+        .string = .{
+            .url = "https://github.com/JakubSzark/zig-string/archive/refs/heads/master.tar.gz",
+            .hash = "zig_string-0.10.0-6dpLWvWcAAD1wSd3dgAqAtOC-VA1aHx6pn2VuNy4ndzI",
+            //the correct hash will be suggested by zig
+        },
+    },
 }
