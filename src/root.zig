@@ -33,7 +33,10 @@ pub fn DataFrame(comptime Schema: type) type {
             _ = try reader.takeDelimiter('\n');
             while (try reader.takeDelimiter('\n')) |line| {
                 var row: Schema = undefined;
-                var row_it = std.mem.tokenizeSequence(u8, line, ",");
+                const trimmed = std.mem.trim(u8, line, "\r");
+                var row_it = std.mem.tokenizeSequence(u8, trimmed, ",");
+
+                var i: usize = 0;
                 inline for (std.meta.fields(Schema)) |field| {
                     const token = row_it.next() orelse return error.MissingField;
                     if (@typeInfo(field.type) == .int) {
@@ -44,7 +47,10 @@ pub fn DataFrame(comptime Schema: type) type {
                         const fieldString = try String.init_with_contents(allocator, token);
                         @field(row, field.name) = fieldString;
                     }
+
+                    i += 1;
                 }
+
                 try df.values.append(df.allocator, row);
             }
 
