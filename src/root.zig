@@ -118,25 +118,40 @@ pub fn inferSchema(path: []const u8) !void {
         const value = firstValues_it.next();
         if (value) |val| {
             const unquoted_name = std.mem.trim(u8, name, "\"");
-            try writer.print("\t{s} = ", .{unquoted_name});
+            try writer.print("\t{s}: ", .{unquoted_name});
             // Figure out if it's an int, a float or a string as a default
-            _ = std.fmt.parseInt(i32, val, 10) catch {
-                _ = std.fmt.parseFloat(f32, val) catch {
+            _ = std.fmt.parseFloat(f32, val) catch {
+                _ = std.fmt.parseInt(i32, val, 10) catch {
                     try writer.print("[]const u8,\n", .{});
                     continue;
                 };
-                try writer.print("f32,\n", .{});
+                try writer.print("i32,\n", .{});
                 continue;
             };
-            try writer.print("i32,\n", .{});
+
+            // Check if it's actually an integer (no decimal point)
+            const has_decimal = std.mem.indexOfScalar(u8, val, '.') != null;
+            if (!has_decimal) {
+                try writer.print("i32,\n", .{});
+            } else {
+                try writer.print("f32,\n", .{});
+            }
         } else break;
     }
-
     try writer.print("}}\n", .{});
     try writer.flush();
 }
 
-pub fn TrainTestSplit(comptime Schema: type, comptime LabelRemoved: type, comptime Label: type, removeLabel: *const fn (Schema) LabelRemoved, extractLabel: *const fn (Schema) Label, allocator: std.mem.Allocator, df: *DataFrame(Schema), ratio: f32) !TTSplit(Schema) {
+pub fn TrainTestSplit(
+    comptime Schema: type,
+    comptime label: []const u8,
+    allocator: std.mem.Allocator,
+    df: *DataFrame(Schema),
+    ratio: f32,
+) !TTSplit(RemoveFeature(Schema, label), ExtractFeature(Schema, label)) {
+    const LabelRemoved = RemoveFeature(Schema, label);
+    const Label = ExtractFeature(Schema, label);
+
     var XTrain = DataFrame(LabelRemoved).init(allocator);
     var XTest = DataFrame(LabelRemoved).init(allocator);
     var YTrain = DataFrame(Label).init(allocator);
@@ -149,24 +164,22 @@ pub fn TrainTestSplit(comptime Schema: type, comptime LabelRemoved: type, compti
     });
     const rand = prng.random();
 
+    const toLabelRemoved = Transform(Schema, LabelRemoved);
+    const toLabel = Transform(Schema, Label);
+
     for (df.values.items) |*v| {
         const random = rand.float(f32);
 
         if (random < ratio) {
-            const removed = removeLabel(v.*);
-            const label = extractLabel(v.*);
-
-            try XTrain.addRow(removed);
-            try YTrain.addRow(label);
+            try XTrain.addRow(toLabelRemoved(v.*));
+            try YTrain.addRow(toLabel(v.*));
         } else {
-            const removed = removeLabel(v.*);
-            const label = extractLabel(v.*);
-
-            try XTest.addRow(removed);
-            try YTest.addRow(label);
+            try XTest.addRow(toLabelRemoved(v.*));
+            try YTest.addRow(toLabel(v.*));
         }
     }
 
+    // 3. Return the struct initialized with the calculated types.
     return TTSplit(LabelRemoved, Label){
         .XTrain = XTrain,
         .XTest = XTest,
@@ -175,6 +188,7 @@ pub fn TrainTestSplit(comptime Schema: type, comptime LabelRemoved: type, compti
     };
 }
 
+// Helper to generate the return struct type
 pub fn TTSplit(comptime LabelRemoved: type, comptime Label: type) type {
     return struct {
         XTrain: DataFrame(LabelRemoved),
@@ -182,4 +196,58 @@ pub fn TTSplit(comptime LabelRemoved: type, comptime Label: type) type {
         YTrain: DataFrame(Label),
         YTest: DataFrame(Label),
     };
+}
+
+pub fn ExtractFeature(comptime Schema: type, name: []const u8) type {
+    const info = @typeInfo(Schema);
+
+    switch (info) {
+        .@"struct" => |stt| {
+            inline for (stt.fields) |field| {
+                if (std.mem.eql(u8, name, field.name)) {
+                    // Create an array containing just this one type
+                    var types: [1]type = undefined;
+                    types[0] = field.type;
+                    return std.meta.Tuple(types[0..1]);
+                }
+            }
+        },
+        else => unreachable,
+    }
+    @compileError("Field not found");
+}
+
+pub fn RemoveFeature(comptime Schema: type, name: []const u8) type {
+    const info = @typeInfo(Schema).@"struct";
+
+    var fields: [info.fields.len]type = undefined;
+    var count: usize = 0;
+
+    inline for (info.fields) |field| {
+        if (!std.mem.eql(u8, name, field.name)) {
+            fields[count] = field.type;
+            count += 1;
+        }
+    }
+
+    return std.meta.Tuple(fields[0..count]);
+}
+
+pub fn Transform(comptime A: type, comptime B: type) *const fn (A) B {
+    const infoA: std.builtin.Type = @typeInfo(A);
+    const infoB: std.builtin.Type = @typeInfo(B);
+
+    if (infoA != .@"struct" or infoB != .@"struct") @compileError("Both A and B must be structs");
+
+    return struct {
+        fn transform(a: A) B {
+            var result: B = undefined;
+            inline for (infoA.@"struct".fields) |f| {
+                if (@hasField(B, f.name) and @hasField(A, f.name)) {
+                    @field(result, f.name) = @field(a, f.name);
+                }
+            }
+            return result;
+        }
+    }.transform;
 }
