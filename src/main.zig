@@ -10,11 +10,27 @@ pub fn main() !void {
     var df = try iguanas.DataFrame(Schema).fromCsv(allocator, "./src/KNNAlgorithmDataset.csv", true);
 
     const ttsplit = try iguanas.TrainTestSplit(Schema, "diagnosis", allocator, &df, 0.75);
+
+    // Print original DataFrame
+    std.debug.print("Original DataFrame (first 3 rows):\n", .{});
+    try df.head(3);
+
+    std.debug.print("\nXTrain (first 3 rows):\n", .{});
+    try ttsplit.XTrain.head(3);
+
+    std.debug.print("\nYTrain (first 3 rows):\n", .{});
+    try ttsplit.YTrain.head(3);
+
+    std.debug.print("\nXTest (first 3 rows):\n", .{});
+    try ttsplit.XTest.head(3);
+
+    std.debug.print("\nYTest (first 3 rows):\n", .{});
+    try ttsplit.YTest.head(3);
 }
 
 const Schema = struct {
     id: i32,
-    diagnosis: []const u8,
+    diagnosis: String,
     radius_mean: f32,
     texture_mean: f32,
     perimeter_mean: f32,
@@ -44,5 +60,8 @@ const Schema = struct {
     concavity_worst: f32,
     concave_points_worst: f32,
     symmetry_worst: f32,
-    fractal_dimension_worst: f32,
+};
+
+const foo = struct {
+    bar: usize,
 };

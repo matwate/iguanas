@@ -85,6 +85,116 @@ pub fn DataFrame(comptime Schema: type) type {
             }
             self.values.deinit(self.allocator);
         }
+
+        pub fn print(self: *Self, from: usize, to: usize) !void {
+            if (@hasDecl(Schema, "format")) {
+                for (self.values.items[from..to]) |*v| {
+                    std.debug.print("{f}\n", .{v.*});
+                }
+            } else {
+                @compileError("Schema doesn't have a format function. If TrainTestSplit was used, the field names are lost, idk how to fix this yet");
+            }
+        }
+
+        pub fn head(self: *const Self, number: ?usize) !void {
+            const rownum = number orelse 5;
+            const fields = std.meta.fields(Schema);
+            const isTuple = @typeInfo(Schema) == .@"struct" and std.meta.fields(Schema)[0].name[0] >= '0' and std.meta.fields(Schema)[0].name[0] <= '9';
+
+            var stdoutBuf: [4096]u8 = undefined;
+            var stdout = std.fs.File.stdout().writer(&stdoutBuf);
+            var writer = &stdout.interface;
+
+            // Print header (only if not a tuple)
+            if (!isTuple) {
+                inline for (fields, 0..) |field, i| {
+                    if (i > 0) try writer.writeAll("  ");
+                    try writer.print("{s: <10}", .{field.name});
+                }
+                try writer.writeAll("\n");
+
+                // Print separator line
+                inline for (fields, 0..) |_, i| {
+                    if (i > 0) try writer.writeAll("  ");
+                    try writer.writeAll("----------");
+                }
+                try writer.writeAll("\n");
+            }
+
+            // Print first N rows
+            const limit = @min(rownum, self.values.items.len);
+            for (self.values.items[0..limit]) |row| {
+                inline for (fields, 0..) |field, i| {
+                    if (i > 0) try writer.writeAll("  ");
+
+                    const value = @field(row, field.name);
+                    if (@typeInfo(field.type) == .int or @typeInfo(field.type) == .float) {
+                        try writer.print("{d: <10}", .{value});
+                    } else if (field.type == String) {
+                        // String type from zig-string has a str() method
+                        const str_val: String = value;
+                        try writer.print("{s: <10}", .{str_val.str()});
+                    } else {
+                        // Fallback for other types
+                        try writer.print("{}       ", .{value});
+                    }
+                }
+                try writer.writeAll("\n");
+            }
+            try writer.flush();
+        }
+
+        pub fn tail(self: *Self, number: ?usize) !void {
+            const rownum = number orelse 5;
+            const fields = std.meta.fields(Schema);
+            const isTuple = @typeInfo(Schema) == .@"struct" and std.meta.fields(Schema)[0].name[0] >= '0' and std.meta.fields(Schema)[0].name[0] <= '9';
+
+            var stdoutBuf: [4096]u8 = undefined;
+            var stdout = std.fs.File.stdout().writer(&stdoutBuf);
+            var writer = &stdout.interface;
+
+            // Print header (only if not a tuple)
+            if (!isTuple) {
+                inline for (fields, 0..) |field, i| {
+                    if (i > 0) try writer.writeAll("  ");
+                    try writer.print("{s: <10}", .{field.name});
+                }
+                try writer.writeAll("\n");
+
+                // Print separator line
+                inline for (fields, 0..) |_, i| {
+                    if (i > 0) try writer.writeAll("  ");
+                    try writer.writeAll("----------");
+                }
+                try writer.writeAll("\n");
+            }
+
+            // Print last N rows
+            const start = if (self.values.items.len > rownum)
+                self.values.items.len - rownum
+            else
+                0;
+
+            for (self.values.items[start..]) |row| {
+                inline for (fields, 0..) |field, i| {
+                    if (i > 0) try writer.writeAll("  ");
+
+                    const value = @field(row, field.name);
+                    if (@typeInfo(field.type) == .int or @typeInfo(field.type) == .float) {
+                        try writer.print("{d: <10}", .{value});
+                    } else if (field.type == String) {
+                        // String type from zig-string has a str() method
+                        const str_val: String = value;
+                        try writer.print("{s: <10}", .{str_val.str()});
+                    } else {
+                        // Fallback for other types
+                        try writer.print("{}       ", .{value});
+                    }
+                }
+                try writer.writeAll("\n");
+            }
+            try writer.flush();
+        }
     };
 }
 
@@ -122,7 +232,7 @@ pub fn inferSchema(path: []const u8) !void {
             // Figure out if it's an int, a float or a string as a default
             _ = std.fmt.parseFloat(f32, val) catch {
                 _ = std.fmt.parseInt(i32, val, 10) catch {
-                    try writer.print("[]const u8,\n", .{});
+                    try writer.print("String,\n", .{});
                     continue;
                 };
                 try writer.print("i32,\n", .{});
@@ -205,7 +315,8 @@ pub fn ExtractFeature(comptime Schema: type, name: []const u8) type {
         .@"struct" => |stt| {
             inline for (stt.fields) |field| {
                 if (std.mem.eql(u8, name, field.name)) {
-                    // Create an array containing just this one type
+                    // For now, return a simple tuple
+                    // This keeps DataFrame working
                     var types: [1]type = undefined;
                     types[0] = field.type;
                     return std.meta.Tuple(types[0..1]);
@@ -220,6 +331,7 @@ pub fn ExtractFeature(comptime Schema: type, name: []const u8) type {
 pub fn RemoveFeature(comptime Schema: type, name: []const u8) type {
     const info = @typeInfo(Schema).@"struct";
 
+    // Build the tuple type
     var fields: [info.fields.len]type = undefined;
     var count: usize = 0;
 
@@ -239,12 +351,32 @@ pub fn Transform(comptime A: type, comptime B: type) *const fn (A) B {
 
     if (infoA != .@"struct" or infoB != .@"struct") @compileError("Both A and B must be structs");
 
+    // Check if B is a tuple (has numeric field names)
+    const isTupleB = infoB.@"struct".fields.len > 0 and infoB.@"struct".fields[0].name[0] >= '0' and infoB.@"struct".fields[0].name[0] <= '9';
+
     return struct {
         fn transform(a: A) B {
             var result: B = undefined;
-            inline for (infoA.@"struct".fields) |f| {
-                if (@hasField(B, f.name) and @hasField(A, f.name)) {
-                    @field(result, f.name) = @field(a, f.name);
+
+            if (isTupleB) {
+                // When B is a tuple, copy fields from A in order
+                // Assuming B has the same types in the same order as A (just with some fields removed)
+                comptime var destIdx: usize = 0;
+                inline for (infoA.@"struct".fields) |srcField| {
+                    if (destIdx < infoB.@"struct".fields.len) {
+                        const destField = infoB.@"struct".fields[destIdx];
+                        if (srcField.type == destField.type) {
+                            result[destIdx] = @field(a, srcField.name);
+                            destIdx += 1;
+                        }
+                    }
+                }
+            } else {
+                // When B has named fields, copy by field name
+                inline for (infoA.@"struct".fields) |f| {
+                    if (@hasField(B, f.name) and @hasField(A, f.name)) {
+                        @field(result, f.name) = @field(a, f.name);
+                    }
                 }
             }
             return result;
