@@ -13,19 +13,15 @@ pub fn main() !void {
 
     // Print original DataFrame
     std.debug.print("Original DataFrame (first 3 rows):\n", .{});
-    try df.head(3);
+    for (df.values.items[0..3]) |item| {
+        std.debug.print("{}: {s}\n", .{ item.id, item.diagnosis.str() });
+    }
 
-    std.debug.print("\nXTrain (first 3 rows):\n", .{});
-    try ttsplit.XTrain.head(3);
-
-    std.debug.print("\nYTrain (first 3 rows):\n", .{});
-    try ttsplit.YTrain.head(3);
-
-    std.debug.print("\nXTest (first 3 rows):\n", .{});
-    try ttsplit.XTest.head(3);
-
-    std.debug.print("\nYTest (first 3 rows):\n", .{});
-    try ttsplit.YTest.head(3);
+    std.debug.print("Split DataFrame (first 3 rows):\n", .{});
+    // Print the same thing but using the tts
+    for (ttsplit.XTrain.values.items[0..3], ttsplit.YTrain.values.items[0..3]) |x, y| {
+        std.debug.print("{}: {s}\n", .{ x.id, y.diagnosis.str() });
+    }
 }
 
 const Schema = struct {
